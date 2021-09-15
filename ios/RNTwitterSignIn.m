@@ -10,6 +10,7 @@
 #import <React/RCTConvert.h>
 #import <React/RCTUtils.h>
 #import "RNTwitterSignIn.h"
+#import <objc/runtime.h>
 
 @implementation RNTwitterSignIn
 
@@ -17,8 +18,6 @@
 {
     return dispatch_get_main_queue();
 }
-
-BOOL authNotResolved = true;
 
 RCT_EXPORT_MODULE();
 
@@ -33,18 +32,13 @@ RCT_EXPORT_METHOD(logIn: (RCTPromiseResolveBlock)resolve
     [[Twitter sharedInstance] logInWithCompletion:^(TWTRSession * _Nullable session, NSError * _Nullable error) {
         if (session) {
             TWTRAPIClient *client = [TWTRAPIClient clientWithCurrentUser];
-
-            [client requestEmailForCurrentUser:^(NSString *email, NSError *error) {
-                NSString *requestedEmail = (email) ? email : @"";
+            [client loadUserWithID:session.userID completion:^(TWTRUser * _Nullable user, NSError * _Nullable error) {
                 NSDictionary *body = @{@"authToken": session.authToken,
                                        @"authTokenSecret": session.authTokenSecret,
                                        @"userID":session.userID,
-                                       @"email": requestedEmail,
+                                       @"user":[self dictionaryWithPropertiesOfObject:user],
                                        @"userName":session.userName};
-                if(authNotResolved){
-                    resolve(body);
-                    authNotResolved = false;
-                }
+                resolve(body);
             }];
         } else {
             reject(@"Error", @"Twitter signin error", error);
@@ -57,5 +51,21 @@ RCT_EXPORT_METHOD(logOut)
     TWTRSessionStore *store = [[Twitter sharedInstance] sessionStore];
     NSString *userID = store.session.userID;
     [store logOutUserID:userID];
+}
+
+- (NSDictionary *)dictionaryWithPropertiesOfObject:(id)obj {
+    NSMutableDictionary *dict = [NSMutableDictionary dictionary];
+
+    unsigned count;
+    objc_property_t *properties = class_copyPropertyList([obj class], &count);
+
+    for (int i = 0; i < count; i++) {
+        NSString *key = [NSString stringWithUTF8String:property_getName(properties[i])];
+        [dict setObject:[obj valueForKey:key] ? [obj valueForKey:key] : @"" forKey:key];
+    }
+
+    free(properties);
+
+    return [NSDictionary dictionaryWithDictionary:dict];
 }
 @end
