@@ -10,7 +10,11 @@ import com.facebook.react.bridge.Promise;
 import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
+import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.bridge.WritableNativeArray;
+import com.facebook.react.bridge.WritableNativeMap;
+import com.google.gson.Gson;
 import com.twitter.sdk.android.core.DefaultLogger;
 import com.twitter.sdk.android.core.Result;
 import com.twitter.sdk.android.core.SessionManager;
@@ -22,9 +26,18 @@ import com.twitter.sdk.android.core.TwitterCore;
 import com.twitter.sdk.android.core.TwitterException;
 import com.twitter.sdk.android.core.TwitterSession;
 import com.twitter.sdk.android.core.identity.TwitterAuthClient;
+import com.twitter.sdk.android.core.models.User;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+
+import retrofit2.Call;
+import retrofit2.Response;
 
 public class TwitterSigninModule extends ReactContextBaseJavaModule implements ActivityEventListener {
 
@@ -69,20 +82,34 @@ public class TwitterSigninModule extends ReactContextBaseJavaModule implements A
                 map.putString("name", session.getUserName());
                 map.putString("userID", Long.toString(session.getUserId()));
                 map.putString("userName", session.getUserName());
-                twitterAuthClient.requestEmail(session, new com.twitter.sdk.android.core.Callback<String>() {
+
+                //Getting the account service of the user logged in
+                TwitterCore.getInstance().getApiClient(session).getAccountService().verifyCredentials(true, false, true).enqueue(new retrofit2.Callback<User>() {
                     @Override
-                    public void success(Result<String> result) {
-                        map.putString("email", result.data);
-                        promise.resolve(map);
+                    public void onResponse(Call<User> call, Response<User> response) {
+                        if (response.isSuccessful()){
+                            User user = response.body();
+                            Object x = user;
+                            final Gson gson = new Gson();
+                            final String convertedUser = gson.toJson(x);
+                            WritableMap returnMap = null;
+                            try {
+                                returnMap = convertJsonToMap(new JSONObject(convertedUser));
+                            } catch (JSONException e) {
+                                e.printStackTrace();
+                            }
+                            map.putMap("user", returnMap);
+                            promise.resolve(map);
+                        }
                     }
 
                     @Override
-                    public void failure(TwitterException exception) {
-                        map.putString("email", "COULD_NOT_FETCH");
+                    public void onFailure(Call<User> call, Throwable t) {
+                        map.putString("user", "COULD_NOT_FETCH");
                         promise.reject(
                                 "COULD_NOT_FETCH",
                                 map.toString(),
-                                new Exception("Failed to obtain email", exception));
+                                new Exception("Failed to obtain userr", t));
                     }
                 });
             }
@@ -120,5 +147,58 @@ public class TwitterSigninModule extends ReactContextBaseJavaModule implements A
         if (twitterAuthClient != null && twitterAuthClient.getRequestCode() == requestCode) {
             twitterAuthClient.onActivityResult(requestCode, resultCode, data);
         }
+    }
+
+    public WritableMap convertJsonToMap(JSONObject jsonObject) throws JSONException {
+        WritableMap map = new WritableNativeMap();
+
+        Iterator<String> iterator = jsonObject.keys();
+        while (iterator.hasNext()) {
+            String key = iterator.next();
+            Object value = jsonObject.get(key);
+            if (value instanceof JSONObject) {
+                map.putMap(key, convertJsonToMap((JSONObject) value));
+            } else if (value instanceof JSONArray) {
+                map.putArray(key, convertJsonToArray((JSONArray) value));
+                if (("option_values").equals(key)) {
+                    map.putArray("options", convertJsonToArray((JSONArray) value));
+                }
+            } else if (value instanceof Boolean) {
+                map.putBoolean(key, (Boolean) value);
+            } else if (value instanceof Integer) {
+                map.putInt(key, (Integer) value);
+            } else if (value instanceof Double) {
+                map.putDouble(key, (Double) value);
+            } else if (value instanceof String) {
+                map.putString(key, (String) value);
+            } else {
+                map.putString(key, value.toString());
+            }
+        }
+        return map;
+    }
+
+    public WritableArray convertJsonToArray(JSONArray jsonArray) throws JSONException {
+        WritableArray array = new WritableNativeArray();
+
+        for (int i = 0; i < jsonArray.length(); i++) {
+            Object value = jsonArray.get(i);
+            if (value instanceof JSONObject) {
+                array.pushMap(this.convertJsonToMap((JSONObject) value));
+            } else if (value instanceof JSONArray) {
+                array.pushArray(convertJsonToArray((JSONArray) value));
+            } else if (value instanceof Boolean) {
+                array.pushBoolean((Boolean) value);
+            } else if (value instanceof Integer) {
+                array.pushInt((Integer) value);
+            } else if (value instanceof Double) {
+                array.pushDouble((Double) value);
+            } else if (value instanceof String) {
+                array.pushString((String) value);
+            } else {
+                array.pushString(value.toString());
+            }
+        }
+        return array;
     }
 }
